@@ -8,6 +8,15 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 
+def _to_string(utf8_str) -> str:
+    """将dnlib的UTF8String转换为Python字符串"""
+    if utf8_str is None:
+        return ""
+    if hasattr(utf8_str, 'String'):
+        return utf8_str.String or ""
+    return str(utf8_str)
+
+
 def _get_default_dnlib_path() -> Optional[str]:
     """获取默认的dnlib.dll路径"""
     # 优先级：环境变量 > 项目目录 > 当前工作目录
@@ -59,8 +68,13 @@ def _ensure_dnlib_loaded() -> None:
     if not dll_path.exists():
         raise FileNotFoundError(f"dnlib.dll not found at: {DNLIB_PATH}")
 
-    sys.path.append(str(dll_path.parent))
-    clr.AddReference("dnlib")
+    # 添加dll所在目录到sys.path
+    dll_dir = str(dll_path.parent)
+    if dll_dir not in sys.path:
+        sys.path.append(dll_dir)
+
+    # 加载dnlib程序集
+    clr.AddReference(dll_path.stem)
     _dll_loaded = True
 
 
@@ -135,32 +149,33 @@ class DnlibBackend:
             set_dnlib_path(dnlib_path)
         _ensure_dnlib_loaded()
 
-        from dnlib import AssemblyResolver, ModuleDefMD, Types
-        self._AssemblyResolver = AssemblyResolver
+        # 从dnlib.DotNet命名空间导入需要的类
+        from dnlib.DotNet import ModuleDefMD
+        from System.IO import File
         self._ModuleDefMD = ModuleDefMD
-        self._Types = Types
-
-        self._loaded_modules: dict[str, any] = {}
+        self._File = File
+        self._loaded_modules: dict = {}
 
     def load_assembly(self, path: str) -> AssemblyInfo:
         """加载.NET程序集"""
-        from System.IO import File
-
         file_path = Path(path)
         if not file_path.exists():
             raise FileNotFoundError(f"Assembly not found: {path}")
 
-        module = self._ModuleDefMD.Load(File.ReadAllBytes(path))
+        module = self._ModuleDefMD.Load(self._File.ReadAllBytes(path))
         self._loaded_modules[path] = module
 
         assembly = module.Assembly
         if assembly:
             version = assembly.Version.ToString() if assembly.Version else "0.0.0.0"
+            name = _to_string(assembly.Name) or file_path.stem
+            full_name = _to_string(assembly.FullName) or ""
+            module_name = _to_string(module.Name) or file_path.name
             return AssemblyInfo(
-                name=assembly.Name or file_path.stem,
-                full_name=assembly.FullName or "",
+                name=name,
+                full_name=full_name,
                 version=version,
-                modules=[module.Name or file_path.name]
+                modules=[module_name]
             )
 
         return AssemblyInfo(
@@ -186,8 +201,9 @@ class DnlibBackend:
         types = []
 
         for td in module.Types:
-            if td.FullName:
-                types.append(td.FullName)
+            full_name = _to_string(td.FullName)
+            if full_name:
+                types.append(full_name)
 
         return types
 
@@ -199,7 +215,7 @@ class DnlibBackend:
         module = self._loaded_modules[path]
 
         for td in module.Types:
-            if td.FullName == type_full_name:
+            if _to_string(td.FullName) == type_full_name:
                 return self._parse_type_def(td)
 
         return None
@@ -214,8 +230,9 @@ class DnlibBackend:
         results = []
 
         for td in module.Types:
-            if td.FullName and pattern_lower in td.FullName.lower():
-                results.append(td.FullName)
+            full_name = _to_string(td.FullName)
+            if full_name and pattern_lower in full_name.lower():
+                results.append(full_name)
 
         return results
 
@@ -229,11 +246,13 @@ class DnlibBackend:
         results = []
 
         for td in module.Types:
+            type_name = _to_string(td.FullName)
             for md in td.Methods:
-                if md.Name and pattern_lower in md.Name.lower():
+                method_name = _to_string(md.Name)
+                if method_name and pattern_lower in method_name.lower():
                     results.append({
-                        "type": td.FullName,
-                        "method": md.Name,
+                        "type": type_name,
+                        "method": method_name,
                         "signature": str(md.Signature) if md.Signature else ""
                     })
 
@@ -247,9 +266,9 @@ class DnlibBackend:
         module = self._loaded_modules[path]
 
         for td in module.Types:
-            if td.FullName == type_full_name:
+            if _to_string(td.FullName) == type_full_name:
                 for md in td.Methods:
-                    if md.Name == method_name:
+                    if _to_string(md.Name) == method_name:
                         return self._get_method_il(md)
 
         return ""
@@ -263,10 +282,13 @@ class DnlibBackend:
         ep = module.EntryPoint
 
         if ep:
+            declaring_type = ""
+            if ep.DeclaringType:
+                declaring_type = _to_string(ep.DeclaringType.FullName)
             return {
                 "token": str(ep.MDToken.ToInt32()),
-                "name": ep.Name,
-                "declaring_type": ep.DeclaringType.FullName if ep.DeclaringType else ""
+                "name": _to_string(ep.Name),
+                "declaring_type": declaring_type
             }
 
         return None
@@ -281,7 +303,7 @@ class DnlibBackend:
 
         for r in module.Resources:
             resources.append({
-                "name": r.Name,
+                "name": _to_string(r.Name),
                 "type": type(r).__name__,
                 "size": getattr(r, "MemoryResourceLength", 0) or 0
             })
@@ -292,12 +314,12 @@ class DnlibBackend:
         """解析类型定义"""
         base_type = ""
         if td.BaseType:
-            base_type = td.BaseType.FullName or ""
+            base_type = _to_string(td.BaseType.FullName)
 
         interfaces = []
         for iface in td.Interfaces:
             if iface.Interface:
-                name = iface.Interface.FullName
+                name = _to_string(iface.Interface.FullName)
                 if name:
                     interfaces.append(name)
 
@@ -314,9 +336,9 @@ class DnlibBackend:
             properties.append(self._parse_property_def(pd))
 
         return TypeInfo(
-            name=td.Name,
-            full_name=td.FullName,
-            namespace=td.Namespace,
+            name=_to_string(td.Name),
+            full_name=_to_string(td.FullName),
+            namespace=_to_string(td.Namespace),
             is_public=td.IsPublic,
             is_sealed=td.IsSealed,
             is_abstract=td.IsAbstract,
@@ -337,20 +359,27 @@ class DnlibBackend:
         if md.Parameters:
             for p in md.Parameters:
                 if p.Type and p.Name:
-                    params.append((str(p.Type), p.Name))
+                    params.append((str(p.Type), _to_string(p.Name)))
 
         return_type = "void"
         if md.Signature and md.Signature.RetType:
             return_type = str(md.Signature.RetType)
 
+        body_size = 0
+        if md.Body:
+            try:
+                body_size = md.Body.GetCodeSize() if hasattr(md.Body, 'GetCodeSize') else 0
+            except:
+                pass
+
         return MethodInfo(
-            name=md.Name,
+            name=_to_string(md.Name),
             return_type=return_type,
             parameters=params,
             is_static=md.IsStatic,
             is_virtual=md.IsVirtual,
             is_abstract=md.IsAbstract,
-            body_size=md.Body.Size if md.Body else 0,
+            body_size=body_size,
             token=str(md.MDToken.ToInt32())
         )
 
@@ -361,7 +390,7 @@ class DnlibBackend:
             field_type = str(fd.FieldType)
 
         return FieldInfo(
-            name=fd.Name,
+            name=_to_string(fd.Name),
             field_type=field_type,
             is_static=fd.IsStatic,
             is_public=fd.IsPublic,
@@ -375,7 +404,7 @@ class DnlibBackend:
             prop_type = str(pd.Type)
 
         return PropertyInfo(
-            name=pd.Name,
+            name=_to_string(pd.Name),
             property_type=prop_type,
             has_getter=pd.GetMethods.Count > 0,
             has_setter=pd.SetMethods.Count > 0,
@@ -390,10 +419,11 @@ class DnlibBackend:
 
         lines = []
         lines.append(f"; Method: {md.FullName}")
-        lines.append(f"; Token: 0x{md.MDToken.ToInt32():08X}")
+        lines.append(f"; Token: 0x{int(md.MDToken.ToInt32()):08X}")
         lines.append("")
 
         for instr in md.Body.Instructions:
-            lines.append(f"IL_{instr.Offset:X4}: {instr}")
+            offset = int(instr.Offset)
+            lines.append(f"IL_{offset:04X}: {instr}")
 
         return "\n".join(lines)
