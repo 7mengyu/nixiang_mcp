@@ -75,11 +75,11 @@ Add to your Claude Code settings (`~/.claude/settings.json`):
 }
 ```
 
+After configuration, **restart Claude Code** to load the MCP server.
+
 ## Usage
 
-After configuration, restart Claude Code. The following tools will be available:
-
-### dnlib Tools
+### Available Tools
 
 | Tool | Description |
 |------|-------------|
@@ -93,15 +93,150 @@ After configuration, restart Claude Code. The following tools will be available:
 | `dnlib_get_entry_point` | Get assembly entry point (Main) |
 | `dnlib_list_resources` | List embedded resources |
 
-### Example Usage
+### Step-by-Step Usage Guide
+
+#### Step 1: Initialize dnlib
+
+After restarting Claude Code, tell the AI to initialize dnlib:
 
 ```
-1. Initialize dnlib with path: C:\path\to\dnlib.dll
-2. Load assembly: D:\Games\SomeGame\Game.exe
-3. Search for types containing "Player"
-4. Get details of PlayerClass
-5. Decompile PlayerClass.Update method
+初始化 dnlib，路径是 C:\Users\scydr\Desktop\123\456\reverse-tools-mcp\dnlib.dll
 ```
+
+Or in English:
+
+```
+Initialize dnlib with path: C:\path\to\your\dnlib.dll
+```
+
+#### Step 2: Load Target Assembly
+
+Load the .NET assembly you want to analyze:
+
+```
+加载程序集 D:\Games\SomeGame\Game.exe
+```
+
+Or:
+
+```
+Load assembly: D:\Games\SomeGame\Game.exe
+```
+
+The tool will return assembly info including name, version, and modules.
+
+#### Step 3: Explore Types
+
+List all types in the assembly:
+
+```
+列出所有类型
+```
+
+Or search for specific types:
+
+```
+搜索包含 "Player" 的类型
+```
+
+#### Step 4: Analyze a Class
+
+Get detailed information about a specific class:
+
+```
+查看 PlayerManager 类的详细信息
+```
+
+This returns:
+- Class name, namespace, base type
+- Interfaces implemented
+- All methods with signatures
+- All fields with types
+- All properties
+
+#### Step 5: Decompile Methods
+
+Decompile a method to IL code for detailed analysis:
+
+```
+反编译 PlayerManager.UpdatePlayer 方法
+```
+
+The output is IL assembly code showing the method's implementation.
+
+#### Step 6: Find Entry Point
+
+Locate the Main method:
+
+```
+获取程序入口点
+```
+
+### Complete Example Conversation
+
+```
+User: 初始化 dnlib，路径是 C:\Tools\dnlib.dll
+
+AI: [Calls dnlib_set_path tool]
+dnlib initialized successfully from: C:\Tools\dnlib.dll
+
+User: 加载程序集 D:\Games\MyGame\MyGame.exe
+
+AI: [Calls dnlib_load_assembly tool]
+{
+  "name": "MyGame",
+  "full_name": "MyGame, Version=1.0.0.0",
+  "version": "1.0.0.0",
+  "modules": ["MyGame.exe"]
+}
+
+User: 搜索包含 "Health" 的类型
+
+AI: [Calls dnlib_search_types tool]
+[
+  "MyGame.PlayerHealth",
+  "MyGame.HealthSystem",
+  "MyGame.UI.HealthBar"
+]
+
+User: 查看 MyGame.PlayerHealth 类的详细信息
+
+AI: [Calls dnlib_get_type tool]
+{
+  "name": "PlayerHealth",
+  "full_name": "MyGame.PlayerHealth",
+  "namespace": "MyGame",
+  "base_type": "System.Object",
+  "methods": [
+    {"name": "GetHealth", "return_type": "System.Int32", "is_static": false},
+    {"name": "SetHealth", "return_type": "System.Void", "is_static": false},
+    {"name": "TakeDamage", "return_type": "System.Void", "is_static": false}
+  ],
+  "fields": [
+    {"name": "currentHealth", "type": "System.Int32", "is_static": false},
+    {"name": "maxHealth", "type": "System.Int32", "is_static": false}
+  ]
+}
+
+User: 反编译 PlayerHealth.SetHealth 方法
+
+AI: [Calls dnlib_decompile_method tool]
+; Method: System.Void MyGame.PlayerHealth.SetHealth(System.Int32)
+; Token: 0x06000102
+
+IL_0000: ldarg.0
+IL_0001: ldarg.1
+IL_0002: stfld System.Int32 MyGame.PlayerHealth::currentHealth
+IL_0007: ret
+```
+
+### Tips for Game Reverse Engineering
+
+1. **Find key classes**: Search for terms like "Player", "Health", "Money", "Inventory", "Weapon"
+2. **Locate modifying methods**: Look for "Add", "Set", "Update", "Increase" method names
+3. **Analyze IL code**: Simple methods like `SetHealth(value)` are easy to understand in IL
+4. **Find entry points**: Entry point helps understand game initialization flow
+5. **Use with other tools**: Combine with dnSpy for visual decompilation, then use MCP for quick searches
 
 ## Requirements
 
